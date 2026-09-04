@@ -2,6 +2,7 @@ import { MESSAGES_COLLECTION, type MessageDocument } from "../../domain/contract
 import type { NotificationStatusPayload } from "../../domain/contracts/notification-status-payload";
 import { redis } from "../../infrastructure/cache/redis/client";
 import { getMongoDb } from "../../infrastructure/database/mongo/client";
+import { prisma } from "../../infrastructure/database/prisma/client";
 
 const DESK_EVENTS_CHANNEL = "desk:events";
 
@@ -46,4 +47,29 @@ export async function updateMessageStatus(payload: NotificationStatusPayload): P
       payload: { externalMessageId: payload.externalMessageId, waStatus: payload.waStatus },
     }),
   );
+
+  if (payload.recipientUserId) {
+    await backfillTargetBsuid(payload.externalMessageId, payload.recipientUserId);
+  }
+}
+
+/// Um contato alcançado por disparo ativo de campanha (CSV de telefones) só
+/// tem waId até a Meta confirmar a entrega — é o status webhook que traz o
+/// bsuid dele pela primeira vez (ou corrige um bsuid desatualizado). Acha o
+/// Target pelo wamid gravado em CampaignTarget.messageId no envio (ver
+/// Campaign-Worker/process-campaign-send.ts) e atualiza o Target já
+/// existente — nunca cria um contato novo/duplicado. Mensagens que não são
+/// de campanha (conversa normal) simplesmente não têm CampaignTarget, então
+/// isso vira um no-op silencioso pra elas.
+async function backfillTargetBsuid(externalMessageId: string, recipientUserId: string): Promise<void> {
+  const campaignTarget = await prisma.campaignTarget.findFirst({
+    where: { messageId: externalMessageId },
+    select: { targetId: true },
+  });
+  if (!campaignTarget) return;
+
+  await prisma.target.update({
+    where: { id: campaignTarget.targetId },
+    data: { bsuid: recipientUserId },
+  });
 }

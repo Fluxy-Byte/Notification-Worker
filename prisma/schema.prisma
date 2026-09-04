@@ -43,6 +43,7 @@ model Agent {
   processingMessage        String
   transferMessage          String
   unsupportedFormatMessage String
+  blockedMessage           String
   outOfHoursMessage        String
   outOfHoursEnabled        Boolean @default(true)
   closingMessage           String
@@ -138,7 +139,12 @@ model Target {
   whatsappChannelId String
   whatsappChannel   WhatsappChannel @relation(fields: [whatsappChannelId], references: [id], onDelete: Cascade)
 
-  waId     String
+  /// Business-Scoped User ID (contacts[].user_id) — vínculo principal do
+  /// contato, sempre presente desde abr/2026.
+  bsuid    String?
+  /// wa_id da Meta — opcional (omitido quando o contato ativa @username e
+  /// não há troca recente de telefone).
+  waId     String?
   name     String?
   email    String?
   metadata Json?
@@ -147,14 +153,36 @@ model Target {
   firstInteractionAt DateTime     @default(now())
   lastInteractionAt  DateTime?
 
+  /// Ids de Agent que este contato está bloqueado de falar — ver
+  /// Agent-Api/prisma/schema.prisma (schema canônico) pro comentário
+  /// completo.
+  blockedAgentIds String[] @default([])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   messagingSessions MessagingSession[]
+  campaignTargets   CampaignTarget[]
 
+  @@unique([organizationId, whatsappChannelId, bsuid])
   @@unique([organizationId, whatsappChannelId, waId])
   @@index([organizationId])
   @@index([whatsappChannelId])
+}
+
+/// Subconjunto mínimo — só o necessário pra achar o Target de um disparo de
+/// campanha a partir do wamid (ver update-message-status.ts): quando o
+/// status de entrega de uma mensagem de campanha traz recipient_user_id,
+/// usamos messageId pra achar o Target certo e atualizar o bsuid dele, sem
+/// criar um contato novo/duplicado.
+model CampaignTarget {
+  id        String  @id @default(cuid())
+  targetId  String
+  target    Target  @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  messageId String?
+
+  @@index([targetId])
+  @@index([messageId])
 }
 
 enum SessionOrigin {
