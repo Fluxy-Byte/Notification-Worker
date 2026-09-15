@@ -3,6 +3,7 @@ import type { NotificationStatusPayload } from "../../domain/contracts/notificat
 import { redis } from "../../infrastructure/cache/redis/client";
 import { getMongoDb } from "../../infrastructure/database/mongo/client";
 import { prisma } from "../../infrastructure/database/prisma/client";
+import { recordMessageLog } from "./message-log-service";
 
 const DESK_EVENTS_CHANNEL = "desk:events";
 
@@ -17,6 +18,8 @@ function delay(ms: number): Promise<void> {
 /// (bounded context diferente), então manda messagingSessionId em vez de
 /// ticketId; quem resolve o ticket/atendente é o subscriber do Desk-API.
 export async function updateMessageStatus(payload: NotificationStatusPayload): Promise<void> {
+  await recordMessageLog(payload.externalMessageId, "start");
+
   const db = await getMongoDb();
   const collection = db.collection<MessageDocument>(MESSAGES_COLLECTION);
 
@@ -36,6 +39,7 @@ export async function updateMessageStatus(payload: NotificationStatusPayload): P
     console.warn(
       `Nenhuma mensagem encontrada para externalMessageId=${payload.externalMessageId} (status=${payload.waStatus}) — ignorando.`,
     );
+    await recordMessageLog(payload.externalMessageId, "end");
     return;
   }
 
@@ -51,6 +55,8 @@ export async function updateMessageStatus(payload: NotificationStatusPayload): P
   if (payload.recipientUserId) {
     await backfillTargetBsuid(payload.externalMessageId, payload.recipientUserId);
   }
+
+  await recordMessageLog(payload.externalMessageId, "end");
 }
 
 /// Um contato alcançado por disparo ativo de campanha (CSV de telefones) só
